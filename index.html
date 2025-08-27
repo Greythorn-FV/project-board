@@ -463,6 +463,7 @@
             </div>
             <button id="connectBtn">Connect</button>
             <button id="syncBtn" disabled>Sync</button>
+            <button id="queueBtn" class="secondary-btn" style="display: none;">Queue (<span id="queueCount">0</span>)</button>
             <button class="secondary-btn" id="debugToggle">Debug</button>
         </div>
     </div>
@@ -624,6 +625,7 @@
                 this.setupEventListeners();
                 this.renderBoard();
                 this.updateConnectionStatus();
+                this.updateQueueDisplay();
                 this.setupDragAndDrop();
                 this.loadInitialData();
                 this.startPeriodicSync();
@@ -631,12 +633,14 @@
                 window.addEventListener('online', () => {
                     this.isOnline = true;
                     this.hideOfflineIndicator();
+                    this.log('Connection restored - processing sync queue', 'info');
                     this.processSyncQueue();
                 });
                 
                 window.addEventListener('offline', () => {
                     this.isOnline = false;
                     this.showOfflineIndicator();
+                    this.log('Connection lost - operations will be queued', 'info');
                 });
             }
 
@@ -659,6 +663,7 @@
             setupEventListeners() {
                 document.getElementById('connectBtn').addEventListener('click', () => this.connect());
                 document.getElementById('syncBtn').addEventListener('click', () => this.syncWithGitHub());
+                document.getElementById('queueBtn').addEventListener('click', () => this.showSyncQueue());
                 document.getElementById('disconnectBtn').addEventListener('click', () => this.disconnect());
                 document.getElementById('debugToggle').addEventListener('click', () => this.toggleDebug());
                 
@@ -1004,10 +1009,13 @@
                 }
 
                 localStorage.setItem('sync_queue', JSON.stringify(this.syncQueue));
+                this.updateQueueDisplay();
                 this.log(`Sync queue processed. ${this.syncQueue.length} operations remaining`, 'info');
             }
 
             async processSyncOperation(operation) {
+                this.log(`🔄 Processing ${operation.type} operation for: ${operation.data.title}`, 'info');
+                
                 switch (operation.type) {
                     case 'create':
                         await this.createGitHubIssue(operation.data);
@@ -1016,8 +1024,11 @@
                         await this.updateGitHubIssue(operation.data);
                         break;
                     case 'close':
+                        this.log(`🗑️ Processing close operation for GitHub issue #${operation.data.githubNumber}`, 'info');
                         await this.closeGitHubIssue(operation.data);
                         break;
+                    default:
+                        this.log(`Unknown operation type: ${operation.type}`, 'error');
                 }
             }
 
@@ -1090,6 +1101,8 @@
                     return;
                 }
 
+                this.log(`Attempting to close GitHub issue #${item.githubNumber}: ${item.title}`, 'info');
+
                 try {
                     const response = await fetch(`https://api.github.com/repos/${this.repo}/issues/${item.githubNumber}`, {
                         method: 'PATCH',
@@ -1106,12 +1119,18 @@
                     });
 
                     if (!response.ok) {
-                        throw new Error(`Failed to close issue: ${response.status}`);
+                        const errorText = await response.text();
+                        throw new Error(`Failed to close issue (${response.status}): ${errorText}`);
                     }
 
-                    this.log(`Closed GitHub issue #${item.githubNumber}: ${item.title}`, 'success');
+                    const result = await response.json();
+                    this.log(`✅ Successfully closed GitHub issue #${item.githubNumber}: ${item.title}`, 'success');
+                    this.log(`Issue URL: ${result.html_url}`, 'info');
+                    
+                    return result;
                 } catch (error) {
-                    this.log(`Failed to close GitHub issue #${item.githubNumber}: ${error.message}`, 'error');
+                    this.log(`❌ Failed to close GitHub issue #${item.githubNumber}: ${error.message}`, 'error');
+                    throw error;
                 }
             }
 
@@ -1125,9 +1144,41 @@
 
                 this.syncQueue.push(operation);
                 localStorage.setItem('sync_queue', JSON.stringify(this.syncQueue));
+                this.updateQueueDisplay();
+                
+                this.log(`📝 Queued ${type} operation for: ${item.title}`, 'info');
                 
                 if (this.isOnline) {
                     setTimeout(() => this.processSyncQueue(), 1000);
+                }
+            }
+
+            updateQueueDisplay() {
+                const queueBtn = document.getElementById('queueBtn');
+                const queueCount = document.getElementById('queueCount');
+                
+                if (this.syncQueue.length > 0) {
+                    queueBtn.style.display = 'inline-block';
+                    queueCount.textContent = this.syncQueue.length;
+                } else {
+                    queueBtn.style.display = 'none';
+                }
+            }
+
+            showSyncQueue() {
+                if (this.syncQueue.length === 0) {
+                    alert('Sync queue is empty');
+                    return;
+                }
+
+                const queueInfo = this.syncQueue.map((op, index) => 
+                    `${index + 1}. ${op.type.toUpperCase()}: ${op.data.title} (${new Date(op.timestamp).toLocaleTimeString()})`
+                ).join('\n');
+
+                const message = `Sync Queue (${this.syncQueue.length} operations):\n\n${queueInfo}\n\nProcess queue now?`;
+                
+                if (confirm(message)) {
+                    this.processSyncQueue();
                 }
             }
 
@@ -1357,10 +1408,18 @@
                 this.saveData();
                 this.renderBoard();
                 
-                if (item.synced && item.githubNumber) {
-                    this.log(`Deleted item and queued GitHub issue #${item.githubNumber} for closure: ${item.title}`, 'success');
+                if (item.synced && item.githubNumber && this.token && this.repo) {
+                    this.log(`Deleted item and queuing GitHub issue #${item.githubNumber} for closure: ${item.title}`, 'success');
                     // Queue for GitHub sync to close the issue
                     this.queueSyncOperation('close', item);
+                    
+                    // If online, process the close operation immediately
+                    if (this.isOnline) {
+                        setTimeout(() => {
+                            this.log('Processing close operation immediately...', 'info');
+                            this.processSyncQueue();
+                        }, 500);
+                    }
                 } else {
                     this.log(`Deleted local item: ${item.title}`, 'success');
                 }
