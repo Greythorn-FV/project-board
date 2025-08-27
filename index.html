@@ -934,7 +934,7 @@
                 }
 
                 const issues = await response.json();
-                this.log(`Fetched ${issues.length} open issues from GitHub`);
+                this.log(`📝 [SOURCE-007] Fetched ${issues.length} open issues from GitHub`, 'info');
 
                 // Track which GitHub issue IDs still exist (are open)
                 const activeGitHubIds = new Set();
@@ -960,11 +960,17 @@
                     };
 
                     if (existingItem) {
+                        // Check if status changed during sync - this should NOT trigger comments
+                        const statusChanged = existingItem.status !== itemData.status;
                         Object.assign(existingItem, itemData);
-                        this.log(`Updated item: ${issue.title}`);
+                        if (statusChanged) {
+                            this.log(`📝 [SOURCE-007] Status sync from GitHub (NO COMMENT): ${existingItem.title} - status now ${itemData.status}`, 'info');
+                        } else {
+                            this.log(`📝 [SOURCE-007] Updated item from GitHub: ${issue.title}`, 'info');
+                        }
                     } else {
                         this.items.push(itemData);
-                        this.log(`Added new item from GitHub: ${issue.title}`);
+                        this.log(`📝 [SOURCE-007] Added new item from GitHub: ${issue.title}`, 'info');
                     }
                 }
 
@@ -982,13 +988,13 @@
                     }
                     
                     // Remove items that no longer exist in GitHub
-                    this.log(`Removing item no longer in GitHub: ${item.title}`, 'info');
+                    this.log(`📝 [SOURCE-007] Removing item no longer in GitHub: ${item.title}`, 'info');
                     return false;
                 });
                 
                 const removedCount = itemsBeforeCleanup - this.items.length;
                 if (removedCount > 0) {
-                    this.log(`Removed ${removedCount} items that were deleted/closed in GitHub`, 'success');
+                    this.log(`📝 [SOURCE-007] Removed ${removedCount} items that were deleted/closed in GitHub`, 'success');
                 }
 
                 this.saveData();
@@ -1024,7 +1030,7 @@
             }
 
             async processSyncOperation(operation) {
-                this.log(`🔄 Processing ${operation.type} operation for: ${operation.data.title}`, 'info');
+                this.log(`🔄 [SOURCE-005] Processing ${operation.type} operation for: ${operation.data.title}`, 'info');
                 
                 switch (operation.type) {
                     case 'create':
@@ -1034,16 +1040,17 @@
                         await this.updateGitHubIssue(operation.data);
                         break;
                     case 'close':
-                        this.log(`🗑️ Processing close operation for GitHub issue #${operation.data.githubNumber}`, 'info');
+                        this.log(`🗑️ [SOURCE-005] Processing close operation for GitHub issue #${operation.data.githubNumber}`, 'info');
                         await this.closeGitHubIssue(operation.data);
                         break;
                     case 'comment':
-                        this.log(`💬 Adding comment to GitHub issue #${operation.data.githubNumber}`, 'info');
+                        const sourceInfo = operation.data.sourceLocation ? ` [${operation.data.sourceLocation}]` : '';
+                        this.log(`💬 [SOURCE-005] Adding comment to GitHub issue #${operation.data.githubNumber}${sourceInfo}`, 'info');
                         await this.addCommentToIssue(operation.data.githubNumber, operation.data.commentBody);
-                        this.log(`✅ Comment added to issue #${operation.data.githubNumber}`, 'success');
+                        this.log(`✅ [SOURCE-005] Comment added to issue #${operation.data.githubNumber}${sourceInfo}`, 'success');
                         break;
                     default:
-                        this.log(`Unknown operation type: ${operation.type}`, 'error');
+                        this.log(`[SOURCE-005] Unknown operation type: ${operation.type}`, 'error');
                 }
             }
 
@@ -1116,7 +1123,7 @@
                     return;
                 }
 
-                this.log(`Attempting to close GitHub issue #${item.githubNumber}: ${item.title}`, 'info');
+                this.log(`📝 [SOURCE-003] Attempting to close GitHub issue #${item.githubNumber}: ${item.title}`, 'info');
 
                 try {
                     // First close the issue
@@ -1140,16 +1147,17 @@
                     }
 
                     const result = await response.json();
-                    this.log(`✅ Successfully closed GitHub issue #${item.githubNumber}: ${item.title}`, 'success');
+                    this.log(`✅ [SOURCE-003] Successfully closed GitHub issue #${item.githubNumber}: ${item.title}`, 'success');
                     
                     // Add a comment indicating the item was deleted from the project board
-                    await this.addCommentToIssue(item.githubNumber, `🗑️ **Item deleted from project board**\n\nThis issue was removed from the project board and has been automatically closed.\n\n_Generated by GitHub Project Board_`);
+                    const deletionComment = `🗑️ **Item deleted from project board** [SOURCE-003-DELETE]\n\nThis issue was removed from the project board and has been automatically closed.\n\n_Generated by GitHub Project Board_`;
+                    await this.addCommentToIssue(item.githubNumber, deletionComment);
                     
-                    this.log(`📝 Added deletion comment to issue #${item.githubNumber}`, 'success');
+                    this.log(`📝 [SOURCE-003] Added deletion comment to issue #${item.githubNumber}`, 'success');
                     
                     return result;
                 } catch (error) {
-                    this.log(`❌ Failed to close GitHub issue #${item.githubNumber}: ${error.message}`, 'error');
+                    this.log(`❌ [SOURCE-003] Failed to close GitHub issue #${item.githubNumber}: ${error.message}`, 'error');
                     throw error;
                 }
             }
@@ -1193,7 +1201,7 @@
                     );
                     
                     if (existingSimilar) {
-                        this.log(`🚫 Preventing duplicate comment operation for issue #${item.githubNumber}`, 'info');
+                        this.log(`🚫 [SOURCE-004] Preventing duplicate comment operation for issue #${item.githubNumber}`, 'info');
                         return;
                     }
                 }
@@ -1216,7 +1224,8 @@
                     'comment': 'status change comment'
                 };
                 
-                this.log(`📝 Queued ${operationNames[type] || type} operation for: ${item.title}`, 'info');
+                const sourceInfo = item.sourceLocation ? ` [${item.sourceLocation}]` : '';
+                this.log(`📝 [SOURCE-004] Queued ${operationNames[type] || type} operation for: ${item.title}${sourceInfo}`, 'info');
                 
                 if (this.isOnline) {
                     // Use a longer delay to prevent rapid-fire processing
@@ -1421,13 +1430,15 @@
                 };
 
                 if (!itemData.title) {
-                    this.log('Title is required', 'error');
+                    this.log('[SOURCE-006] Title is required', 'error');
                     return;
                 }
 
                 if (editId) {
+                    this.log(`📝 [SOURCE-006] Form submit - updating item via modal`, 'info');
                     this.updateItem(editId, itemData);
                 } else {
+                    this.log(`📝 [SOURCE-006] Form submit - creating new item via modal`, 'info');
                     this.createItem(itemData);
                 }
 
@@ -1453,16 +1464,10 @@
                 }
             }
 
-            addStatusChangeComment(item, oldStatus, newStatus) {
+            addStatusChangeComment(item, oldStatus, newStatus, sourceLocation = 'unknown') {
                 if (!this.token || !this.repo || !item.synced || !item.githubNumber) {
                     return;
                 }
-                
-                // Generate unique ID to track this comment
-                const commentId = `${item.id}-${oldStatus}-${newStatus}-${Date.now()}`;
-                
-                this.log(`🔍 addStatusChangeComment called with ID: ${commentId}`, 'info');
-                this.log(`🔍 Caller stack: ${new Error().stack.split('\n')[2].trim()}`, 'info');
                 
                 const statusMap = {
                     'backlog': 'Backlog',
@@ -1472,16 +1477,16 @@
                     'done': 'Done'
                 };
                 
-                const comment = `📋 **Status changed on project board**\n\n**${statusMap[oldStatus] || oldStatus}** → **${statusMap[newStatus] || newStatus}**\n\n_Generated by GitHub Project Board (ID: ${commentId})_`;
+                const comment = `📋 **Status changed on project board** [SOURCE-${sourceLocation}]\n\n**${statusMap[oldStatus] || oldStatus}** → **${statusMap[newStatus] || newStatus}**\n\n_Generated by GitHub Project Board_`;
                 
                 this.queueSyncOperation('comment', {
                     ...item,
                     commentBody: comment,
                     operationType: 'status_change',
-                    commentId: commentId
+                    sourceLocation: sourceLocation
                 });
                 
-                this.log(`📝 Queued status change comment: ${oldStatus} → ${newStatus} for ${item.title} (ID: ${commentId})`, 'info');
+                this.log(`📝 [SOURCE-${sourceLocation}] Queued status change comment: ${oldStatus} → ${newStatus} for ${item.title}`, 'info');
             }
 
             updateItem(id, data) {
@@ -1496,11 +1501,11 @@
 
                 this.saveData();
                 this.renderBoard();
-                this.log(`Updated item: ${item.title}`, 'success');
+                this.log(`📝 [SOURCE-001] Updated item: ${item.title}`, 'success');
 
                 // Only add status change comment if status actually changed
                 if (oldStatus !== item.status) {
-                    this.addStatusChangeComment(item, oldStatus, item.status);
+                    this.addStatusChangeComment(item, oldStatus, item.status, '001-UPDATE-ITEM');
                 }
 
                 if (this.token && this.repo && item.synced) {
@@ -1555,10 +1560,10 @@
 
                 this.saveData();
                 this.renderBoard();
-                this.log(`Moved item "${item.title}" from ${oldStatus} to ${newStatus}`, 'success');
+                this.log(`📝 [SOURCE-002] Moved item "${item.title}" from ${oldStatus} to ${newStatus}`, 'success');
 
                 // Add status change comment - using centralized function
-                this.addStatusChangeComment(item, oldStatus, newStatus);
+                this.addStatusChangeComment(item, oldStatus, newStatus, '002-MOVE-ITEM');
 
                 if (this.token && this.repo && item.synced) {
                     this.queueSyncOperation('update', item);
