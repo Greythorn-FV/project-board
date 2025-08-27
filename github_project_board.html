@@ -606,6 +606,7 @@
                 this.repoData = null;
                 this.syncTimeout = null;
                 this.isProcessingQueue = false;
+                this.userIP = null;
                 
                 this.statusMapping = {
                     'backlog': 'open',
@@ -1005,7 +1006,7 @@
                 if (!this.isOnline || this.syncQueue.length === 0) return;
                 
                 if (this.isProcessingQueue) {
-                    this.log('⏳ Sync queue already being processed, skipping...', 'info');
+                    this.log('Sync queue already being processed, skipping...', 'info');
                     return;
                 }
                 
@@ -1030,7 +1031,7 @@
             }
 
             async processSyncOperation(operation) {
-                this.log(`🔄 [SOURCE-005] Processing ${operation.type} operation for: ${operation.data.title}`, 'info');
+                this.log(`Processing ${operation.type} operation for: ${operation.data.title}`, 'info');
                 
                 switch (operation.type) {
                     case 'create':
@@ -1040,21 +1041,27 @@
                         await this.updateGitHubIssue(operation.data);
                         break;
                     case 'close':
-                        this.log(`🗑️ [SOURCE-005] Processing close operation for GitHub issue #${operation.data.githubNumber}`, 'info');
+                        this.log(`Processing close operation for GitHub issue #${operation.data.githubNumber}`, 'info');
                         await this.closeGitHubIssue(operation.data);
                         break;
                     case 'comment':
-                        const sourceInfo = operation.data.sourceLocation ? ` [${operation.data.sourceLocation}]` : '';
-                        this.log(`💬 [SOURCE-005] Adding comment to GitHub issue #${operation.data.githubNumber}${sourceInfo}`, 'info');
+                        this.log(`Adding comment to GitHub issue #${operation.data.githubNumber}`, 'info');
                         await this.addCommentToIssue(operation.data.githubNumber, operation.data.commentBody);
-                        this.log(`✅ [SOURCE-005] Comment added to issue #${operation.data.githubNumber}${sourceInfo}`, 'success');
+                        this.log(`Comment added to issue #${operation.data.githubNumber}`, 'success');
                         break;
                     default:
-                        this.log(`[SOURCE-005] Unknown operation type: ${operation.type}`, 'error');
+                        this.log(`Unknown operation type: ${operation.type}`, 'error');
                 }
             }
 
             async createGitHubIssue(item) {
+                const userIP = await this.fetchUserIP();
+                
+                // Add IP information to the issue body
+                const issueBody = item.body ? 
+                    `${item.body}\n\n---\n_Created from project board by user at IP: ${userIP}_` :
+                    `_Created from project board by user at IP: ${userIP}_`;
+                
                 const response = await fetch(`https://api.github.com/repos/${this.repo}/issues`, {
                     method: 'POST',
                     headers: {
@@ -1065,7 +1072,7 @@
                     },
                     body: JSON.stringify({
                         title: item.title,
-                        body: item.body,
+                        body: issueBody,
                         labels: item.labels,
                         assignee: item.assignee || null
                     })
@@ -1085,7 +1092,7 @@
                     localItem.synced = true;
                 }
 
-                this.log(`Created GitHub issue #${createdIssue.number}: ${item.title}`, 'success');
+                this.log(`Created GitHub issue #${createdIssue.number}: ${item.title} (IP: ${userIP})`, 'success');
             }
 
             async updateGitHubIssue(item) {
@@ -1123,9 +1130,11 @@
                     return;
                 }
 
-                this.log(`📝 [SOURCE-003] Attempting to close GitHub issue #${item.githubNumber}: ${item.title}`, 'info');
+                this.log(`Attempting to close GitHub issue #${item.githubNumber}: ${item.title}`, 'info');
 
                 try {
+                    const userIP = await this.fetchUserIP();
+                    
                     // First close the issue
                     const response = await fetch(`https://api.github.com/repos/${this.repo}/issues/${item.githubNumber}`, {
                         method: 'PATCH',
@@ -1147,17 +1156,17 @@
                     }
 
                     const result = await response.json();
-                    this.log(`✅ [SOURCE-003] Successfully closed GitHub issue #${item.githubNumber}: ${item.title}`, 'success');
+                    this.log(`✅ Successfully closed GitHub issue #${item.githubNumber}: ${item.title}`, 'success');
                     
                     // Add a comment indicating the item was deleted from the project board
-                    const deletionComment = `🗑️ **Item deleted from project board** [SOURCE-003-DELETE]\n\nThis issue was removed from the project board and has been automatically closed.\n\n_Generated by GitHub Project Board_`;
+                    const deletionComment = `🗑️ **Item deleted from project board**\n\nThis issue was removed from the project board and has been automatically closed.\n\n_Deleted by user at IP: ${userIP}_\n_Generated by GitHub Project Board_`;
                     await this.addCommentToIssue(item.githubNumber, deletionComment);
                     
-                    this.log(`📝 [SOURCE-003] Added deletion comment to issue #${item.githubNumber}`, 'success');
+                    this.log(`Added deletion comment to issue #${item.githubNumber} (IP: ${userIP})`, 'success');
                     
                     return result;
                 } catch (error) {
-                    this.log(`❌ [SOURCE-003] Failed to close GitHub issue #${item.githubNumber}: ${error.message}`, 'error');
+                    this.log(`❌ Failed to close GitHub issue #${item.githubNumber}: ${error.message}`, 'error');
                     throw error;
                 }
             }
@@ -1201,7 +1210,7 @@
                     );
                     
                     if (existingSimilar) {
-                        this.log(`🚫 [SOURCE-004] Preventing duplicate comment operation for issue #${item.githubNumber}`, 'info');
+                        this.log(`Preventing duplicate comment operation for issue #${item.githubNumber}`, 'info');
                         return;
                     }
                 }
@@ -1224,8 +1233,7 @@
                     'comment': 'status change comment'
                 };
                 
-                const sourceInfo = item.sourceLocation ? ` [${item.sourceLocation}]` : '';
-                this.log(`📝 [SOURCE-004] Queued ${operationNames[type] || type} operation for: ${item.title}${sourceInfo}`, 'info');
+                this.log(`Queued ${operationNames[type] || type} operation for: ${item.title}`, 'info');
                 
                 if (this.isOnline) {
                     // Use a longer delay to prevent rapid-fire processing
@@ -1430,15 +1438,13 @@
                 };
 
                 if (!itemData.title) {
-                    this.log('[SOURCE-006] Title is required', 'error');
+                    this.log('Title is required', 'error');
                     return;
                 }
 
                 if (editId) {
-                    this.log(`📝 [SOURCE-006] Form submit - updating item via modal`, 'info');
                     this.updateItem(editId, itemData);
                 } else {
-                    this.log(`📝 [SOURCE-006] Form submit - creating new item via modal`, 'info');
                     this.createItem(itemData);
                 }
 
@@ -1464,14 +1470,32 @@
                 }
             }
 
-            addStatusChangeComment(item, oldStatus, newStatus, sourceLocation = 'unknown') {
-                this.log(`🔍 [DEBUG] addStatusChangeComment called with sourceLocation: "${sourceLocation}"`, 'info');
+            async fetchUserIP() {
+                if (this.userIP) return this.userIP; // Return cached IP
                 
+                try {
+                    const response = await fetch('https://api.ipify.org?format=json');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.userIP = data.ip;
+                        this.log(`Fetched user IP: ${this.userIP}`, 'info');
+                        return this.userIP;
+                    }
+                } catch (error) {
+                    this.log(`Failed to fetch IP address: ${error.message}`, 'error');
+                }
+                
+                // Fallback if IP fetch fails
+                this.userIP = 'Unknown';
+                return this.userIP;
+            }
+
+            async addStatusChangeComment(item, oldStatus, newStatus) {
                 if (!this.token || !this.repo || !item.synced || !item.githubNumber) {
-                    this.log(`🔍 [DEBUG] Skipping comment - missing requirements: token=${!!this.token}, repo=${!!this.repo}, synced=${!!item.synced}, githubNumber=${!!item.githubNumber}`, 'info');
                     return;
                 }
                 
+                const userIP = await this.fetchUserIP();
                 const statusMap = {
                     'backlog': 'Backlog',
                     'todo': 'To Do',
@@ -1480,18 +1504,15 @@
                     'done': 'Done'
                 };
                 
-                const comment = `📋 **Status changed on project board** [SOURCE-${sourceLocation}]\n\n**${statusMap[oldStatus] || oldStatus}** → **${statusMap[newStatus] || newStatus}**\n\n_Generated by GitHub Project Board_`;
-                
-                this.log(`🔍 [DEBUG] Generated comment text: "${comment}"`, 'info');
+                const comment = `📋 **Status changed on project board**\n\n**${statusMap[oldStatus] || oldStatus}** → **${statusMap[newStatus] || newStatus}**\n\n_Changed by user at IP: ${userIP}_\n_Generated by GitHub Project Board_`;
                 
                 this.queueSyncOperation('comment', {
                     ...item,
                     commentBody: comment,
-                    operationType: 'status_change',
-                    sourceLocation: sourceLocation
+                    operationType: 'status_change'
                 });
                 
-                this.log(`📝 [SOURCE-${sourceLocation}] Queued status change comment: ${oldStatus} → ${newStatus} for ${item.title}`, 'info');
+                this.log(`Queued status change comment: ${oldStatus} → ${newStatus} for ${item.title} (IP: ${userIP})`, 'info');
             }
 
             updateItem(id, data) {
@@ -1506,11 +1527,11 @@
 
                 this.saveData();
                 this.renderBoard();
-                this.log(`📝 [SOURCE-001] Updated item: ${item.title}`, 'success');
+                this.log(`Updated item: ${item.title}`, 'success');
 
                 // Only add status change comment if status actually changed
                 if (oldStatus !== item.status) {
-                    this.addStatusChangeComment(item, oldStatus, item.status, '001-UPDATE-ITEM');
+                    this.addStatusChangeComment(item, oldStatus, item.status);
                 }
 
                 if (this.token && this.repo && item.synced) {
@@ -1524,7 +1545,7 @@
 
                 let confirmMessage = 'Are you sure you want to delete this item?';
                 if (item.synced && item.githubNumber) {
-                    confirmMessage = `Delete "${item.title}"?\n\nThis will:\n• Remove it from the board\n• Close GitHub issue #${item.githubNumber}\n• Add a comment indicating it was deleted from the project board\n\nNote: GitHub issues cannot be permanently deleted, only closed.`;
+                    confirmMessage = `Delete "${item.title}"?\n\nThis will:\n• Remove it from the board\n• Close GitHub issue #${item.githubNumber}\n• Add a comment with IP address indicating it was deleted from the project board\n\nNote: GitHub issues cannot be permanently deleted, only closed.`;
                 }
 
                 if (!confirm(confirmMessage)) return;
@@ -1565,10 +1586,10 @@
 
                 this.saveData();
                 this.renderBoard();
-                this.log(`📝 [SOURCE-002] Moved item "${item.title}" from ${oldStatus} to ${newStatus}`, 'success');
+                this.log(`Moved item "${item.title}" from ${oldStatus} to ${newStatus}`, 'success');
 
                 // Add status change comment - using centralized function
-                this.addStatusChangeComment(item, oldStatus, newStatus, '002-MOVE-ITEM');
+                this.addStatusChangeComment(item, oldStatus, newStatus);
 
                 if (this.token && this.repo && item.synced) {
                     this.queueSyncOperation('update', item);
