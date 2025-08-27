@@ -347,6 +347,56 @@
             margin-top: 2rem;
         }
 
+        .connection-banner {
+            background: #238636;
+            color: white;
+            padding: 0.75rem 2rem;
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2ea043;
+            font-weight: 500;
+        }
+
+        .connection-banner.show {
+            display: flex;
+        }
+
+        .connection-banner.error {
+            background: #f85149;
+        }
+
+        .connection-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .connection-details {
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .repo-name {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        .connection-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .sync-status {
+            font-size: 0.75rem;
+            opacity: 0.9;
+        }
+
         .offline-indicator {
             background: #f85149;
             color: white;
@@ -414,6 +464,21 @@
             <button id="connectBtn">Connect</button>
             <button id="syncBtn" disabled>Sync</button>
             <button class="secondary-btn" id="debugToggle">Debug</button>
+        </div>
+    </div>
+
+    <div class="connection-banner" id="connectionBanner">
+        <div class="connection-info">
+            <div class="connection-details">
+                <span>✅ Connected to</span>
+                <span class="repo-name" id="connectedRepo"></span>
+                <span>as</span>
+                <span id="connectedUser"></span>
+            </div>
+        </div>
+        <div class="connection-actions">
+            <span class="sync-status" id="syncStatus">Last synced: Never</span>
+            <button id="disconnectBtn" class="secondary-btn" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Disconnect</button>
         </div>
     </div>
 
@@ -532,10 +597,12 @@
             constructor() {
                 this.token = localStorage.getItem('github_token') || '';
                 this.repo = localStorage.getItem('github_repo') || '';
+                this.connectedUser = localStorage.getItem('github_user') || '';
                 this.items = JSON.parse(localStorage.getItem('board_items') || '[]');
                 this.isOnline = navigator.onLine;
                 this.syncQueue = JSON.parse(localStorage.getItem('sync_queue') || '[]');
                 this.debugMode = false;
+                this.repoData = null;
                 
                 this.statusMapping = {
                     'backlog': 'open',
@@ -592,6 +659,7 @@
             setupEventListeners() {
                 document.getElementById('connectBtn').addEventListener('click', () => this.connect());
                 document.getElementById('syncBtn').addEventListener('click', () => this.syncWithGitHub());
+                document.getElementById('disconnectBtn').addEventListener('click', () => this.disconnect());
                 document.getElementById('debugToggle').addEventListener('click', () => this.toggleDebug());
                 
                 document.getElementById('repoSelect').addEventListener('change', (e) => {
@@ -719,9 +787,13 @@
                     
                     this.token = token;
                     this.repo = repo;
+                    this.connectedUser = user.login;
+                    this.repoData = repoData;
                     localStorage.setItem('github_token', token);
                     localStorage.setItem('github_repo', repo);
+                    localStorage.setItem('github_user', user.login);
                     
+                    this.showConnectionBanner();
                     this.updateConnectionStatus(true);
                     document.getElementById('syncBtn').disabled = false;
                     document.getElementById('corsHelp').classList.remove('show');
@@ -742,8 +814,79 @@
                         errorMessage = 'Network error - check internet connection and firewall settings';
                     }
                     
+                    this.showConnectionError(errorMessage);
                     this.log(`Connection failed: ${errorMessage}`, 'error');
                     this.updateConnectionStatus(false);
+                }
+            }
+
+            disconnect() {
+                if (!confirm('Disconnect from GitHub? Local data will be preserved.')) return;
+
+                this.token = '';
+                this.repo = '';
+                this.connectedUser = '';
+                this.repoData = null;
+                
+                localStorage.removeItem('github_token');
+                localStorage.removeItem('github_repo');
+                localStorage.removeItem('github_user');
+                
+                this.hideConnectionBanner();
+                this.updateConnectionStatus(false);
+                document.getElementById('syncBtn').disabled = true;
+                document.getElementById('repoSelect').style.display = 'none';
+                
+                // Clear input fields
+                document.getElementById('tokenInput').value = '';
+                document.getElementById('repoInput').value = '';
+                
+                this.log('Disconnected from GitHub', 'info');
+            }
+
+            showConnectionBanner() {
+                const banner = document.getElementById('connectionBanner');
+                const repoElement = document.getElementById('connectedRepo');
+                const userElement = document.getElementById('connectedUser');
+                
+                repoElement.textContent = this.repo;
+                userElement.textContent = `@${this.connectedUser}`;
+                
+                banner.classList.remove('error');
+                banner.classList.add('show');
+                
+                this.updateSyncStatus('Connected');
+            }
+
+            showConnectionError(message) {
+                const banner = document.getElementById('connectionBanner');
+                const repoElement = document.getElementById('connectedRepo');
+                const userElement = document.getElementById('connectedUser');
+                
+                repoElement.textContent = 'Connection Failed';
+                userElement.textContent = message;
+                
+                banner.classList.add('error', 'show');
+                
+                // Hide error banner after 5 seconds
+                setTimeout(() => {
+                    banner.classList.remove('show');
+                }, 5000);
+            }
+
+            hideConnectionBanner() {
+                const banner = document.getElementById('connectionBanner');
+                banner.classList.remove('show', 'error');
+            }
+
+            updateSyncStatus(status) {
+                const syncStatus = document.getElementById('syncStatus');
+                if (status === 'Connected') {
+                    syncStatus.textContent = 'Ready to sync';
+                } else if (status === 'Syncing') {
+                    syncStatus.textContent = 'Syncing...';
+                } else {
+                    syncStatus.textContent = `Last synced: ${new Date().toLocaleTimeString()}`;
                 }
             }
 
@@ -755,10 +898,12 @@
 
                 this.log('Starting GitHub sync...');
                 this.updateConnectionStatus('syncing');
+                this.updateSyncStatus('Syncing');
 
                 try {
                     await this.fetchGitHubIssues();
                     await this.processSyncQueue();
+                    this.updateSyncStatus('Complete');
                     this.log('Sync completed successfully', 'success');
                 } catch (error) {
                     this.log(`Sync failed: ${error.message}`, 'error');
@@ -1401,6 +1546,11 @@
                     document.getElementById('repoInput').value = this.repo;
                     this.updateConnectionStatus(true);
                     document.getElementById('syncBtn').disabled = false;
+                    
+                    // Restore connection info if available
+                    if (this.connectedUser) {
+                        this.showConnectionBanner();
+                    }
                 }
             }
 
