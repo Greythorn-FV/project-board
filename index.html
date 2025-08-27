@@ -913,7 +913,8 @@
             }
 
             async fetchGitHubIssues() {
-                const response = await fetch(`https://api.github.com/repos/${this.repo}/issues?state=all&per_page=100`, {
+                // Fetch only open issues - anything not here is considered deleted/closed
+                const response = await fetch(`https://api.github.com/repos/${this.repo}/issues?state=open&per_page=100`, {
                     headers: {
                         'Authorization': `token ${this.token}`,
                         'Accept': 'application/vnd.github.v3+json',
@@ -926,26 +927,15 @@
                 }
 
                 const issues = await response.json();
-                this.log(`Fetched ${issues.length} issues from GitHub`);
+                this.log(`Fetched ${issues.length} open issues from GitHub`);
 
-                // Track which GitHub issue IDs we've processed
-                const processedGitHubIds = new Set();
-
+                // Track which GitHub issue IDs still exist (are open)
+                const activeGitHubIds = new Set();
+                
+                // Process all open issues from GitHub
                 for (const issue of issues) {
-                    processedGitHubIds.add(issue.id);
+                    activeGitHubIds.add(issue.id);
                     const existingItem = this.items.find(item => item.githubId === issue.id);
-                    
-                    // If issue is closed, remove it from local items (represents deletion)
-                    if (issue.state === 'closed') {
-                        if (existingItem) {
-                            const itemIndex = this.items.findIndex(item => item.githubId === issue.id);
-                            if (itemIndex !== -1) {
-                                this.items.splice(itemIndex, 1);
-                                this.log(`Removed closed issue: ${issue.title}`);
-                            }
-                        }
-                        continue; // Skip adding closed issues to the board
-                    }
                     
                     const itemData = {
                         id: existingItem?.id || this.generateId(),
@@ -967,22 +957,32 @@
                         this.log(`Updated item: ${issue.title}`);
                     } else {
                         this.items.push(itemData);
-                        this.log(`Created item: ${issue.title}`);
+                        this.log(`Added new item from GitHub: ${issue.title}`);
                     }
                 }
 
-                // Remove any local items that no longer exist in GitHub (manually deleted in GitHub)
-                const itemsToRemove = this.items.filter(item => 
-                    item.synced && item.githubId && !processedGitHubIds.has(item.githubId)
-                );
-                
-                itemsToRemove.forEach(item => {
-                    const itemIndex = this.items.findIndex(i => i.id === item.id);
-                    if (itemIndex !== -1) {
-                        this.items.splice(itemIndex, 1);
-                        this.log(`Removed item deleted in GitHub: ${item.title}`);
+                // Remove any synced items that no longer exist in GitHub (deleted or closed)
+                const itemsBeforeCleanup = this.items.length;
+                this.items = this.items.filter(item => {
+                    // Keep local-only items (not synced yet)
+                    if (!item.synced || !item.githubId) {
+                        return true;
                     }
+                    
+                    // Keep items that still exist in GitHub as open issues
+                    if (activeGitHubIds.has(item.githubId)) {
+                        return true;
+                    }
+                    
+                    // Remove items that no longer exist in GitHub
+                    this.log(`Removing item no longer in GitHub: ${item.title}`, 'info');
+                    return false;
                 });
+                
+                const removedCount = itemsBeforeCleanup - this.items.length;
+                if (removedCount > 0) {
+                    this.log(`Removed ${removedCount} items that were deleted/closed in GitHub`, 'success');
+                }
 
                 this.saveData();
                 this.renderBoard();
