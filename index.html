@@ -79,6 +79,15 @@
             opacity: 0.6;
         }
 
+        .template-btn {
+            background: #1f6feb !important;
+            border-color: #1f6feb !important;
+        }
+
+        .template-btn:hover {
+            background: #388bfd !important;
+        }
+
         .secondary-btn {
             background: #f85149 !important;
             border-color: #f85149 !important;
@@ -418,6 +427,7 @@
         <div class="input-group">
             <button id="addItemBtn">Add Item</button>
             <button id="bulkImportBtn">Bulk Import</button>
+            <button id="templateBtn" class="template-btn">📋 Template</button>
             <button id="exportBtn">Export</button>
         </div>
         <div class="input-group">
@@ -592,6 +602,7 @@
                 
                 document.getElementById('addItemBtn').addEventListener('click', () => this.showItemModal());
                 document.getElementById('bulkImportBtn').addEventListener('click', () => this.bulkImport());
+                document.getElementById('templateBtn').addEventListener('click', () => this.downloadTemplate());
                 document.getElementById('exportBtn').addEventListener('click', () => this.exportData());
                 
                 document.getElementById('searchInput').addEventListener('input', (e) => this.searchItems(e.target.value));
@@ -1172,6 +1183,122 @@
                 }
 
                 return items.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+            }
+
+            downloadTemplate() {
+                // Show format selection dialog
+                const format = prompt(
+                    'Choose template format:\n\n' +
+                    '1. JSON (recommended)\n' +
+                    '2. CSV (basic)\n\n' +
+                    'Enter 1 or 2:', 
+                    '1'
+                );
+                
+                if (format === '1' || format === 'json' || format === 'JSON') {
+                    this.downloadJSONTemplate();
+                } else if (format === '2' || format === 'csv' || format === 'CSV') {
+                    this.downloadCSVTemplate();
+                } else if (format !== null) {
+                    this.log('Invalid format selection. Use 1 for JSON or 2 for CSV.', 'error');
+                }
+            }
+
+            downloadJSONTemplate() {
+                const template = [
+                    {
+                        title: "Fix login authentication bug",
+                        body: "Users are unable to login with their credentials. This affects the main authentication flow and needs immediate attention.\n\n## Steps to Reproduce\n1. Go to login page\n2. Enter valid credentials\n3. Click login button\n\n## Expected Result\nUser should be logged in successfully\n\n## Actual Result\nError message appears",
+                        status: "todo",
+                        labels: ["bug", "high-priority", "authentication"],
+                        assignee: "developer-username"
+                    },
+                    {
+                        title: "Add dark mode toggle",
+                        body: "Implement a dark mode theme option in the user interface.\n\n- [ ] Design dark color scheme\n- [ ] Create toggle component\n- [ ] Save user preference\n- [ ] Test accessibility",
+                        status: "backlog",
+                        labels: ["feature", "ui/ux", "enhancement"],
+                        assignee: ""
+                    },
+                    {
+                        title: "Update API documentation",
+                        body: "The API documentation needs to be updated to reflect the new endpoints added in v2.0",
+                        status: "in-progress",
+                        labels: ["documentation", "api"],
+                        assignee: "tech-writer"
+                    },
+                    {
+                        title: "Performance optimization research",
+                        body: "Research and document potential performance improvements for the dashboard loading times.",
+                        status: "review",
+                        labels: ["performance", "research"],
+                        assignee: "senior-dev"
+                    },
+                    {
+                        title: "Setup automated testing pipeline",
+                        body: "Configure CI/CD pipeline with automated testing for pull requests.",
+                        status: "done",
+                        labels: ["devops", "testing", "automation"],
+                        assignee: "devops-engineer"
+                    }
+                ];
+
+                const templateWithMeta = {
+                    _template_info: {
+                        version: "1.0",
+                        description: "GitHub Project Board Bulk Import Template",
+                        instructions: [
+                            "Replace the example items below with your own data",
+                            "All fields are optional except 'title'",
+                            "Valid status values: backlog, todo, in-progress, review, done",
+                            "Labels should be an array of strings",
+                            "Assignee should be a GitHub username (optional)",
+                            "Body supports Markdown formatting"
+                        ],
+                        required_fields: ["title"],
+                        optional_fields: ["body", "status", "labels", "assignee"]
+                    },
+                    items: template
+                };
+
+                const blob = new Blob([JSON.stringify(templateWithMeta, null, 2)], {
+                    type: 'application/json'
+                });
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `github-project-board-template-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                this.log('Downloaded JSON template with example data', 'success');
+            }
+
+            downloadCSVTemplate() {
+                const csvTemplate = `title,body,status,labels,assignee
+"Fix login authentication bug","Users are unable to login with their credentials. This affects the main authentication flow.","todo","bug,high-priority,authentication","developer-username"
+"Add dark mode toggle","Implement a dark mode theme option in the user interface.","backlog","feature,ui/ux,enhancement",""
+"Update API documentation","The API documentation needs to be updated to reflect the new endpoints added in v2.0","in-progress","documentation,api","tech-writer"
+"Performance optimization research","Research and document potential performance improvements for the dashboard loading times.","review","performance,research","senior-dev"
+"Setup automated testing pipeline","Configure CI/CD pipeline with automated testing for pull requests.","done","devops,testing,automation","devops-engineer"`;
+
+                const blob = new Blob([csvTemplate], {
+                    type: 'text/csv'
+                });
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `github-project-board-template-${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                this.log('Downloaded CSV template with example data', 'success');
             }
 
             bulkImport() {
